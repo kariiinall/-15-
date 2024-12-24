@@ -1,0 +1,107 @@
+import java.util.concurrent.*;
+import java.util.*;
+
+class CacheItem {
+    String key;
+    Object value;
+    long expirationTime;
+
+    CacheItem(String key, Object value, long expirationTime) {
+        this.key = key;
+        this.value = value;
+        this.expirationTime = expirationTime;
+    }
+
+    boolean isExpired() {
+        return System.currentTimeMillis() > expirationTime;
+    }
+}
+
+class CacheManager {
+    private static volatile CacheManager instance;
+    private final ConcurrentHashMap<String, CacheItem> cache = new ConcurrentHashMap<>();
+
+    public static CacheManager getInstance() {
+        if (instance == null) {
+            synchronized (CacheManager.class) {
+                if (instance == null) {
+                    instance = new CacheManager();
+                }
+            }
+        }
+        return instance;
+    }
+
+    public void addItem(String key, Object value, long expirationTime) {
+        long expirationTimestamp = System.currentTimeMillis() + expirationTime;
+        CacheItem item = new CacheItem(key, value, expirationTimestamp);
+        cache.put(key, item);
+    }
+
+    public Object getItem(String key) {
+        CacheItem item = cache.get(key);
+        if (item != null && !item.isExpired()) {
+            return item.value;
+        }
+        cache.remove(key);
+        return null;
+    }
+
+    public void removeItem(String key) {
+        cache.remove(key);
+    }
+
+    public void clearCache() {
+        cache.clear();
+    }
+
+    public void cleanup() {
+        long now = System.currentTimeMillis();
+        for (String key : cache.keySet()) {
+            CacheItem item = cache.get(key);
+            if (item != null && item.isExpired()) {
+                removeItem(key);
+            }
+        }
+    }
+}
+
+class CacheCleaner {
+    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+    private final CacheManager cacheManager;
+
+    public CacheCleaner(CacheManager cacheManager) {
+        this.cacheManager = cacheManager;
+    }
+
+    public void startCleanupTask(long intervalMs) {
+        scheduler.scheduleAtFixedRate(() -> cacheManager.cleanup(), intervalMs, intervalMs, TimeUnit.MILLISECONDS);
+    }
+
+    public void stopCleanupTask() {
+        scheduler.shutdown();
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        CacheManager cacheManager = CacheManager.getInstance();
+
+        cacheManager.addItem("key1", "value1", 25000);
+        cacheManager.addItem("key2", "value2", 100000);
+
+        System.out.println("Key1: " + cacheManager.getItem("key1"));
+
+        CacheCleaner cleaner = new CacheCleaner(cacheManager);
+        cleaner.startCleanupTask(2000);
+
+        try {
+            Thread.sleep(5000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+
+        System.out.println("Key1 after expiration: " + cacheManager.getItem("key1"));
+        cleaner.stopCleanupTask();
+    }
+}
